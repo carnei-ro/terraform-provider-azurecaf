@@ -2,26 +2,67 @@ package azurecaf
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/aztfmod/terraform-provider-azurecaf/azurecaf/internal/models"
+	"github.com/aztfmod/terraform-provider-azurecaf/azurecaf/internal/schemas"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
-func setData(prefixes []string, name string, suffixes []string, cleanInput bool) *schema.ResourceData {
-	data := &schema.ResourceData{}
-	data.Set("name", name)
-	data.Set("prefixes", prefixes)
-	data.Set("suffixes", suffixes)
-	data.Set("clean_input", cleanInput)
-	return data
+func testAccCafNamingValidation(id string, name string, expectedLength int, prefix string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[id]
+		if !ok {
+			return fmt.Errorf("Not found: %s", id)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("No ID is set")
+		}
+
+		attrs := rs.Primary.Attributes
+
+		result := attrs["result"]
+		if len(result) != expectedLength {
+			return fmt.Errorf("got %s %d result items; want %d", result, len(result), expectedLength)
+		}
+		if !strings.HasPrefix(result, prefix) {
+			return fmt.Errorf("got %s which doesn't start with %s", result, prefix)
+		}
+		if !strings.Contains(result, name) {
+			return fmt.Errorf("got %s which doesn't contain the name %s", result, name)
+		}
+		return nil
+	}
+}
+
+func regexMatch(id string, exp *regexp.Regexp, requiredMatches int) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[id]
+		if !ok {
+			return fmt.Errorf("Not found: %s", id)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("No ID is set")
+		}
+
+		result := rs.Primary.Attributes["result"]
+
+		if matches := exp.FindAllStringSubmatchIndex(result, -1); len(matches) != requiredMatches {
+			return fmt.Errorf("result string is %s; did not match %s, got %d", result, exp, len(matches))
+		}
+
+		return nil
+	}
 }
 
 func TestCleanInput_no_changes(t *testing.T) {
 	data := "testdata"
-	resource := ResourceDefinitions["azurerm_resource_group"]
+	resource := models.ResourceDefinitions["azurerm_resource_group"]
 	result := cleanString(data, &resource)
 	if data != result {
 		t.Errorf("Expected %s but received %s", data, result)
@@ -29,9 +70,9 @@ func TestCleanInput_no_changes(t *testing.T) {
 }
 
 func TestCleanInput_remove_always(t *testing.T) {
-	data := "🐱‍🚀testdata😊"
+	data := "😀testdata😊"
 	expected := "testdata"
-	resource := ResourceDefinitions["azurerm_resource_group"]
+	resource := models.ResourceDefinitions["azurerm_resource_group"]
 	result := cleanString(data, &resource)
 	if result != expected {
 		t.Errorf("Expected %s but received %s", expected, result)
@@ -41,7 +82,7 @@ func TestCleanInput_remove_always(t *testing.T) {
 func TestCleanInput_not_remove_special_allowed_chars(t *testing.T) {
 	data := "testdata()"
 	expected := "testdata()"
-	resource := ResourceDefinitions["azurerm_resource_group"]
+	resource := models.ResourceDefinitions["azurerm_resource_group"]
 	result := cleanString(data, &resource)
 	if result != expected {
 		t.Errorf("Expected %s but received %s", expected, result)
@@ -50,7 +91,7 @@ func TestCleanInput_not_remove_special_allowed_chars(t *testing.T) {
 
 func TestCleanSplice_no_changes(t *testing.T) {
 	data := []string{"testdata", "test", "data"}
-	resource := ResourceDefinitions["azurerm_resource_group"]
+	resource := models.ResourceDefinitions["azurerm_resource_group"]
 	result := cleanSlice(data, &resource)
 	for i := range data {
 		if data[i] != result[i] {
@@ -73,8 +114,7 @@ func TestConcatenateParameters_azurerm_public_ip_prefix(t *testing.T) {
 
 func TestGetSlug(t *testing.T) {
 	resourceType := "azurerm_resource_group"
-	convention := ConventionCafClassic
-	result := getSlug(resourceType, convention)
+	result := getSlug(resourceType)
 	expected := "rg"
 	if result != expected {
 		t.Errorf("Expected %s but received %s", expected, result)
@@ -83,8 +123,7 @@ func TestGetSlug(t *testing.T) {
 
 func TestGetSlug_unknown(t *testing.T) {
 	resourceType := "azurerm_does_not_exist"
-	convention := ConventionCafClassic
-	result := getSlug(resourceType, convention)
+	result := getSlug(resourceType)
 	expected := ""
 	if result != expected {
 		t.Errorf("Expected %s but received %s", expected, result)
@@ -101,7 +140,6 @@ func TestAccResourceName_CafClassic(t *testing.T) {
 			{
 				Config: testAccResourceNameCafClassicConfig,
 				Check: resource.ComposeTestCheckFunc(
-
 					testAccCafNamingValidation(
 						"azurecaf_name.classic_rg",
 						"pr1-pr2-rg-myrg-",
@@ -179,7 +217,7 @@ func TestAccResourceName_CafClassic(t *testing.T) {
 						"passthrough",
 						11,
 						""),
-					regexMatch("azurecaf_name.passthrough", regexp.MustCompile(ResourceDefinitions["azurerm_container_registry"].ValidationRegExp), 1),
+					regexMatch("azurecaf_name.passthrough", regexp.MustCompile(models.ResourceDefinitions["azurerm_container_registry"].ValidationRegExp), 1),
 				),
 			},
 			{
@@ -191,14 +229,14 @@ func TestAccResourceName_CafClassic(t *testing.T) {
 						"vsic-apim-apim",
 						14,
 						"vsic"),
-					regexMatch("azurecaf_name.apim", regexp.MustCompile(ResourceDefinitions["azurerm_api_management_service"].ValidationRegExp), 1),
+					regexMatch("azurecaf_name.apim", regexp.MustCompile(models.ResourceDefinitions["azurerm_api_management_service"].ValidationRegExp), 1),
 				),
 			},
 		},
 	})
 }
 
-func TestAccResourceName_CafClassicRSV(t *testing.T) {
+func TestAccResourceName_RsvCafClassic(t *testing.T) {
 	resource.UnitTest(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
 		Providers:    testAccProviders,
@@ -212,7 +250,7 @@ func TestAccResourceName_CafClassicRSV(t *testing.T) {
 						"pr1-rsv-test-gm-su1",
 						19,
 						""),
-					regexMatch("azurecaf_name.rsv", regexp.MustCompile(ResourceDefinitions["azurerm_recovery_services_vault"].ValidationRegExp), 1),
+					regexMatch("azurecaf_name.rsv", regexp.MustCompile(models.ResourceDefinitions["azurerm_recovery_services_vault"].ValidationRegExp), 1),
 				),
 			},
 		},
@@ -308,7 +346,7 @@ func TestValidResourceType_invalidParameters(t *testing.T) {
 
 func TestGetResourceNameValid(t *testing.T) {
 	namePrecedence := []string{"name", "slug", "random", "suffixes", "prefixes"}
-	resourceName, err := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", "cafclassic", true, false, true, namePrecedence)
+	resourceName, err := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", true, false, true, namePrecedence)
 	expected := "a-b-rg-myrg-1234"
 
 	if err != nil {
@@ -323,7 +361,7 @@ func TestGetResourceNameValid(t *testing.T) {
 
 func TestGetResourceNameValidRsv(t *testing.T) {
 	namePrecedence := []string{"name", "slug", "random", "suffixes", "prefixes"}
-	resourceName, err := getResourceName("azurerm_recovery_services_vault", "-", []string{"a", "b"}, "test", nil, "1234", "cafclassic", true, false, true, namePrecedence)
+	resourceName, err := getResourceName("azurerm_recovery_services_vault", "-", []string{"a", "b"}, "test", nil, "1234", true, false, true, namePrecedence)
 	expected := "a-b-rsv-test-1234"
 
 	if err != nil {
@@ -338,7 +376,7 @@ func TestGetResourceNameValidRsv(t *testing.T) {
 
 func TestGetResourceNameValidNoSlug(t *testing.T) {
 	namePrecedence := []string{"name", "slug", "random", "suffixes", "prefixes"}
-	resourceName, err := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", "cafclassic", true, false, false, namePrecedence)
+	resourceName, err := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", true, false, false, namePrecedence)
 	expected := "a-b-myrg-1234"
 
 	if err != nil {
@@ -353,7 +391,7 @@ func TestGetResourceNameValidNoSlug(t *testing.T) {
 
 func TestGetResourceNameInvalidResourceType(t *testing.T) {
 	namePrecedence := []string{"name", "slug", "random", "suffixes", "prefixes"}
-	resourceName, err := getResourceName("azurerm_invalid", "-", []string{"a", "b"}, "myrg", nil, "1234", "cafclassic", true, false, true, namePrecedence)
+	resourceName, err := getResourceName("azurerm_invalid", "-", []string{"a", "b"}, "myrg", nil, "1234", true, false, true, namePrecedence)
 	expected := "a-b-rg-myrg-1234"
 
 	if err == nil {
@@ -368,7 +406,7 @@ func TestGetResourceNameInvalidResourceType(t *testing.T) {
 
 func TestGetResourceNamePassthrough(t *testing.T) {
 	namePrecedence := []string{"name", "slug", "random", "suffixes", "prefixes"}
-	resourceName, _ := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", "cafclassic", true, true, true, namePrecedence)
+	resourceName, _ := getResourceName("azurerm_resource_group", "-", []string{"a", "b"}, "myrg", nil, "1234", true, true, true, namePrecedence)
 	expected := "myrg"
 
 	if expected != resourceName {
@@ -389,7 +427,7 @@ func testResourceNameStateDataV3() map[string]interface{} {
 
 func TestResourceExampleInstanceStateUpgradeV2(t *testing.T) {
 	expected := testResourceNameStateDataV3()
-	actual, err := resourceNameStateUpgradeV2(context.Background(), testResourceNameStateDataV2(), nil)
+	actual, err := schemas.ResourceNameStateUpgradeV2(context.Background(), testResourceNameStateDataV2(), nil)
 	if err != nil {
 		t.Fatalf("error migrating state: %s", err)
 	}

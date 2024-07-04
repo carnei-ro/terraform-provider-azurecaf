@@ -1,8 +1,30 @@
+terraform {
+  required_providers {
+    azurecaf = {
+      source  = "aztfmod/azurecaf"
+      version = "1.2.4"
+    }
+  }
+}
+
+provider "azurecaf" {
+
+}
 
 #Storage account test
 resource "azurecaf_name" "classic_st" {
-  name          = "log2"
+  name          = "log23"
+  random_length = 5
   resource_type = "azurerm_storage_account"
+  resource_types = [ "azurerm_cognitive_account", "azurerm_bot_web_app" ]
+}
+
+resource "azurecaf_name" "classic_st_randon" {
+  name          = "log23"
+  random_length = 5
+  random_seed = 1
+  resource_type = "azurerm_storage_account"
+  resource_types = [ "azurerm_cognitive_account" ]
 }
 
 output "caf_name_classic_st" {
@@ -16,7 +38,7 @@ resource "azurecaf_name" "azurerm_cognitive_account" {
   prefixes      = ["a", "z"]
   suffixes      = ["prod"]
   random_length = 5
-  random_seed   = 12343
+  random_seed   = 123
   clean_input   = true
   separator     = "-"
 }
@@ -48,9 +70,24 @@ resource "azurecaf_name" "multiple_resources" {
   prefixes       = ["a", "b"]
   suffixes       = ["prod"]
   random_length  = 4
-  random_seed    = 12343
+  random_seed    = 123
   clean_input    = true
   separator      = "-"
+}
+data "azurecaf_name" "name_data" {
+  name           = "cogsdemo2"
+  resource_type  = "azurerm_cognitive_account"
+  resource_types = ["azurerm_storage_account"]
+  prefixes       = ["a", "b"]
+  suffixes       = ["prod"]
+  random_length  = 4
+  random_seed    = 123
+  clean_input    = true
+  separator      = "-"
+}
+
+output "name_data" {
+  value       = data.azurecaf_name.name_data.results
 }
 
 output "multiple_resources" {
@@ -59,4 +96,8 @@ output "multiple_resources" {
 
 output "multiple_resources_main" {
   value = azurecaf_name.multiple_resources.result
+}
+
+output "classic_st_random" {
+  value = azurecaf_name.classic_st_randon.result
 }
